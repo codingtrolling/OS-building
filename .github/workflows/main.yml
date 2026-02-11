@@ -1,4 +1,4 @@
-name: Build Jelly Bean ROM (Docker Method)
+name: Build Jelly Bean ROM (AOSP Docker)
 
 on:
   workflow_dispatch:
@@ -8,63 +8,46 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: ubuntu:14.04
-
+    
     steps:
-      - name: Fix Apt Sources and Install Essentials
-        run: |
-          # Use a HEREDOC to completely overwrite the broken sources.list
-          cat <<EOF > /etc/apt/sources.list
-          deb http://old-releases.ubuntu.com/ubuntu trusty main restricted universe multiverse
-          deb http://old-releases.ubuntu.com/ubuntu trusty-updates main restricted universe multiverse
-          deb http://old-releases.ubuntu.com/ubuntu trusty-security main restricted universe multiverse
-          EOF
-          
-          apt-get update
-          # Install basic tools needed for the next steps
-          apt-get install -y curl git-core gnupg build-essential python
+      - name: Maximize Disk Space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 2048
+          swap-size-mb: 5120
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
 
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          # Actions checkout v4 needs a newer node version, but we are in Ubuntu 14.04
-          # We might need to use v2 if v4 complains about GLIBC
-          set-safe-directory: '*'
 
-      - name: Install Build Dependencies
+      - name: Run Build in AOSP Container
         run: |
-          apt-get install -y flex bison gperf zlib1g-dev gcc-multilib g++-multilib \
-          libc6-dev-i386 lib32ncurses5-dev x11proto-core-dev libx11-dev \
-          lib32z-dev ccache libgl1-mesa-dev libxml2-utils xsltproc unzip \
-          openjdk-7-jdk
-
-      - name: Install Repo Tool
-        run: |
-          mkdir -p ~/bin
-          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-          chmod a+x ~/bin/repo
-          ln -sf ~/bin/repo /usr/bin/repo
-
-      - name: Sync Source
-        run: |
-          git config --global user.email "you@example.com"
-          git config --global user.name "Your Name"
-          mkdir android && cd android
-          repo init -u https://android.googlesource.com/platform/manifest -b android-4.2.2_r1
-          # Convert git to https
-          sed -i 's/git:\/\//https:\/\//g' .repo/manifests/default.xml
-          repo sync -c -j4 --no-tags --no-clone-bundle
-
-      - name: Build ROM
-        run: |
-          cd android
-          source build/envsetup.sh
-          lunch full_arm-eng
-          make -j$(nproc)
+          # We run the commands inside a container that ALREADY works
+          docker run --privileged -v $(pwd):/build kylemanna/aosp /bin/bash -c "
+            git config --global user.email 'you@example.com'
+            git config --global user.name 'Your Name'
+            
+            mkdir -p jb_source && cd jb_source
+            
+            # Initialize
+            repo init -u https://android.googlesource.com/platform/manifest -b android-4.2.2_r1
+            
+            # Fix the dead git links
+            sed -i 's/git:\/\//https:\/\//g' .repo/manifests/default.xml
+            
+            # Sync
+            repo sync -c -j4 --no-tags --no-clone-bundle
+            
+            # Build
+            source build/envsetup.sh
+            lunch full_arm-eng
+            make -j$(nproc)
+          "
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: JB-ROM
-          path: android/out/target/product/*/system.img
+          path: jb_source/out/target/product/*/system.img
