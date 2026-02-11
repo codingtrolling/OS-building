@@ -1,9 +1,7 @@
-name: Build Jelly Bean ROM (AOSP Docker)
+name: Build Jelly Bean ROM (Space-Saving)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
 
 jobs:
   build:
@@ -13,11 +11,12 @@ jobs:
       - name: Maximize Disk Space
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: 2048
+          root-reserve-mb: 1024
           swap-size-mb: 10240
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
+          remove-codeql: 'true' # Extra space cleanup
 
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -30,43 +29,45 @@ jobs:
           
           git config --global user.email "builder@example.com"
           git config --global user.name "Builder"
-          git config --global color.ui false
 
           mkdir -p ~/bin
-          # Use legacy repo-1 for Python 2.7 compatibility
           curl https://storage.googleapis.com/git-repo-downloads/repo-1 > ~/bin/repo
           chmod a+x ~/bin/repo
           export PATH=~/bin:$PATH
 
           mkdir -p jb_source && cd jb_source
           
-          # Initialize Jelly Bean 4.2.2
+          # Initialize with minimal history
           repo init -u https://android.googlesource.com/platform/manifest -b android-4.2.2_r1 --depth=1
           
-          # Fix dead git links
-          if [ -f .repo/manifests/default.xml ]; then
-            sed -i 's/git:\/\//https:\/\//g' .repo/manifests/default.xml
-          fi
+          sed -i 's/git:\/\//https:\/\//g' .repo/manifests/default.xml
           
           # Sync
           repo sync -c -j4 --no-tags --no-clone-bundle
           
-          # Setup Environment
+          # --- SPACE SAVING MANEUVER ---
+          # Delete the .repo folder (approx 20GB-30GB) 
+          # Warning: You can't "repo sync" again after this, but we have the files we need.
+          rm -rf .repo
+          # -----------------------------
+
           source build/envsetup.sh
           lunch full_arm-eng
           
-          # TARGET: otapackage creates the flashable .zip
-          make -j4 otapackage
+          # Build only the essential images first to save space
+          make -j4
           
-          # Move the ZIP to the output folder
+          # Now try to make the OTA package
+          make otapackage
+          
           mkdir -p /build/output
-          cp out/target/product/generic/full_arm-ota-*.zip /build/output/rom.zip 2>/dev/null || true
+          cp out/target/product/generic/full_arm-ota-*.zip /build/output/rom.zip || true
           EOF
 
           chmod +x build_script.sh
           docker run --privileged -u root -v $(pwd):/build -w /build kylemanna/aosp /bin/bash ./build_script.sh
 
-      - name: Upload Flashable ROM
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: JellyBean-Flashable-ZIP
