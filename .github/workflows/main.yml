@@ -24,48 +24,53 @@ jobs:
 
       - name: Run Build in AOSP Container
         run: |
-          # Create the script file
           cat <<EOF > build_script.sh
           set -e
           
-          # Use the home directory to avoid "Permission Denied"
+          # Go to home dir
           cd ~
           
+          # Setup Git
           git config --global user.email "builder@example.com"
           git config --global user.name "Builder"
           git config --global color.ui false
 
-          mkdir -p jb_source && cd jb_source
-          
-          # Install repo tool in a local bin folder
+          # DOWNLOAD REPO AND FIX PYTHON PATH
           mkdir -p ~/bin
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
+          
+          # FORCE REPO TO USE PYTHON 2
+          sed -i 's/python3/python/g' ~/bin/repo
           export PATH=~/bin:\$PATH
 
-          # Initialize
+          mkdir -p jb_source && cd jb_source
+          
+          # Initialize Jelly Bean
           repo init -u https://android.googlesource.com/platform/manifest -b android-4.2.2_r1 --depth=1
           
-          # Fix the dead git links
-          sed -i 's/git:\/\//https:\/\//g' .repo/manifests/default.xml
+          # Fix dead git links
+          if [ -f .repo/manifests/default.xml ]; then
+            sed -i 's/git:\/\//https:\/\//g' .repo/manifests/default.xml
+          fi
           
-          # Sync
+          # Syncing
           repo sync -c -j4 --no-tags --no-clone-bundle
           
-          # Build
+          # Build ROM
           source build/envsetup.sh
           lunch full_arm-eng
-          make -j$(nproc)
+          make -j\$(nproc)
           
-          # Copy output back to the github workspace so we can upload it
+          # Move output to the visible workspace
           mkdir -p /build/output
           cp out/target/product/generic/*.img /build/output/ 2>/dev/null || true
           EOF
 
           chmod +x build_script.sh
           
-          # Run as root inside the container to ensure no permission issues with /build
-          docker run --privileged -u root -v $(pwd):/build -w /build kylemanna/aosp /bin/bash ./build_script.sh
+          # Run container as root
+          docker run --privileged -u root -v \$(pwd):/build -w /build kylemanna/aosp /bin/bash ./build_script.sh
 
       - name: Upload
         uses: actions/upload-artifact@v4
