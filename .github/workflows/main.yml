@@ -1,0 +1,47 @@
+name: Legacy Android Build (Jelly Bean)
+on:
+  workflow_dispatch: # Allows manual trigger
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04 # 20.04 is slightly more stable for legacy docker tasks
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Maximize Build Space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 2048
+          swap-size-mb: 5120
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+
+      - name: Set up Build Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git-core gnupg flex bison gperf build-essential zip curl zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 lib32ncurses5-dev x11proto-core-dev libx11-dev lib32z-dev ccache libgl1-mesa-dev libxml2-utils xsltproc unzip python2
+          # Download the Repo tool
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+
+      - name: Sync and Build
+        run: |
+          export PATH=$PATH:~/bin
+          mkdir android-jb && cd android-jb
+          
+          # Initialize for Jelly Bean (Example: 4.2.2)
+          # Note: Many git:// URLs in old manifests are dead; you may need to patch the manifest
+          repo init -u https://android.googlesource.com/platform/manifest -b android-4.2.2_r1
+          
+          # Syncing (This is the most likely step to time out)
+          repo sync -c -j$(nproc) --force-sync --no-clone-bundle --no-tags
+          
+          # Setup build environment
+          source build/envsetup.sh
+          
+          # Replace <device_codename> with your target (e.g., mako, maguro)
+          # lunch full_<device_codename>-userdebug
+          # make -j$(nproc)
