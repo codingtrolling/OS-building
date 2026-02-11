@@ -1,14 +1,16 @@
 name: Build Jelly Bean ROM
 
 on:
-  workflow_dispatch: # Allows you to click "Run Workflow" manually
+  workflow_dispatch:
   push:
     branches:
-      - main # Triggers automatically when you push to main
+      - main
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    # Using latest to avoid the queue loop often found on older images
+    runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -25,10 +27,10 @@ jobs:
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential zip curl libstaging-allocator-dev \
-          libncurses5-dev libsdl1.2-dev libesd0-dev libwxgtk3.0-gtk3-dev squashfs-tools \
-          schedtool libxml2-utils xsltproc g++-multilib lib32z1-dev lib32ncurses5-dev \
-          gcc-multilib python2 python-is-python2 liblz4-tool genisoimage
+          sudo apt-get install -y bc build-essential zip curl libncurses5-dev \
+          libsdl1.2-dev squashfs-tools schedtool libxml2-utils xsltproc \
+          g++-multilib lib32z1-dev lib32ncurses5-dev gcc-multilib \
+          python2 python-is-python2 liblz4-tool genisoimage git
 
       - name: Install Repo Tool
         run: |
@@ -37,35 +39,37 @@ jobs:
           chmod a+x ~/bin/repo
           sudo ln -sf ~/bin/repo /usr/bin/repo
 
-      - name: Initialize and Sync Source
+      - name: Initialize and Sync
         run: |
-          git config --global user.email "you@example.com"
-          git config --global user.name "Your Name"
-          mkdir android-build && cd android-build
+          git config --global user.email "build@example.com"
+          git config --global user.name "Builder"
+          mkdir jb-source && cd jb-source
           
-          # Initialize Jelly Bean 4.2.2
+          # Initialize Jelly Bean
           repo init -u https://android.googlesource.com/platform/manifest -b android-4.2.2_r1
           
-          # CRITICAL: Fix legacy git:// URLs to https://
-          if [ -f .repo/manifests/default.xml ]; then
-            sed -i 's/fetch="git:\/\//fetch="https:\/\//g' .repo/manifests/default.xml
-          fi
+          # FIX: Replace dead git:// protocol with https:// in the manifest
+          sed -i 's/git:\/\//https:\/\//g' .repo/manifests/default.xml
           
-          # Sync (This takes 30-60 mins)
+          # Sync with retries to prevent timing out
           repo sync -c -j$(nproc) --force-sync --no-clone-bundle --no-tags
 
       - name: Build ROM
         run: |
-          cd android-build
+          cd jb-source
+          # Set Python 2 as default for the build script
+          export PYTHON=$(which python2)
+          
           source build/envsetup.sh
           
-          # Replace 'full_arm-eng' with your specific device combo if you have a device tree
-          lunch full_arm-eng 
+          # 'full_arm-eng' is the generic emulator build
+          # Change this to your device (e.g., mako, maguro) if you have the trees
+          lunch full_arm-eng
           
           make -j$(nproc)
 
-      - name: Upload Output
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: JellyBean-ROM
-          path: android-build/out/target/product/*/system.img
+          name: JellyBean-Output
+          path: jb-source/out/target/product/*/system.img
