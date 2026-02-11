@@ -24,25 +24,22 @@ jobs:
 
       - name: Run Build in AOSP Container
         run: |
-          cat <<EOF > build_script.sh
+          # Use single quotes around EOF to prevent GitHub from trying to run commands locally
+          cat <<'EOF' > build_script.sh
           set -e
-          
-          # Go to home dir
           cd ~
           
-          # Setup Git
           git config --global user.email "builder@example.com"
           git config --global user.name "Builder"
           git config --global color.ui false
 
-          # DOWNLOAD REPO AND FIX PYTHON PATH
           mkdir -p ~/bin
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           
-          # FORCE REPO TO USE PYTHON 2
+          # Fix Python 3 requirement for the old environment
           sed -i 's/python3/python/g' ~/bin/repo
-          export PATH=~/bin:\$PATH
+          export PATH=~/bin:$PATH
 
           mkdir -p jb_source && cd jb_source
           
@@ -54,13 +51,15 @@ jobs:
             sed -i 's/git:\/\//https:\/\//g' .repo/manifests/default.xml
           fi
           
-          # Syncing
+          # Sync (Limit threads to 4 to avoid RAM crashes)
           repo sync -c -j4 --no-tags --no-clone-bundle
           
           # Build ROM
           source build/envsetup.sh
           lunch full_arm-eng
-          make -j\$(nproc)
+          
+          # Using a hardcoded '4' for threads to avoid $(nproc) syntax issues
+          make -j4
           
           # Move output to the visible workspace
           mkdir -p /build/output
@@ -70,7 +69,7 @@ jobs:
           chmod +x build_script.sh
           
           # Run container as root
-          docker run --privileged -u root -v \$(pwd):/build -w /build kylemanna/aosp /bin/bash ./build_script.sh
+          docker run --privileged -u root -v $(pwd):/build -w /build kylemanna/aosp /bin/bash ./build_script.sh
 
       - name: Upload
         uses: actions/upload-artifact@v4
