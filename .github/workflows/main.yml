@@ -24,7 +24,6 @@ jobs:
 
       - name: Run Build in AOSP Container
         run: |
-          # Use single quotes around EOF to prevent GitHub from trying to run commands locally
           cat <<'EOF' > build_script.sh
           set -e
           cd ~
@@ -34,16 +33,14 @@ jobs:
           git config --global color.ui false
 
           mkdir -p ~/bin
-          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          # Use legacy repo-1 for Python 2.7 compatibility
+          curl https://storage.googleapis.com/git-repo-downloads/repo-1 > ~/bin/repo
           chmod a+x ~/bin/repo
-          
-          # Fix Python 3 requirement for the old environment
-          sed -i 's/python3/python/g' ~/bin/repo
           export PATH=~/bin:$PATH
 
           mkdir -p jb_source && cd jb_source
           
-          # Initialize Jelly Bean
+          # Initialize Jelly Bean 4.2.2
           repo init -u https://android.googlesource.com/platform/manifest -b android-4.2.2_r1 --depth=1
           
           # Fix dead git links
@@ -51,28 +48,26 @@ jobs:
             sed -i 's/git:\/\//https:\/\//g' .repo/manifests/default.xml
           fi
           
-          # Sync (Limit threads to 4 to avoid RAM crashes)
+          # Sync
           repo sync -c -j4 --no-tags --no-clone-bundle
           
-          # Build ROM
+          # Setup Environment
           source build/envsetup.sh
           lunch full_arm-eng
           
-          # Using a hardcoded '4' for threads to avoid $(nproc) syntax issues
-          make -j4
+          # TARGET: otapackage creates the flashable .zip
+          make -j4 otapackage
           
-          # Move output to the visible workspace
+          # Move the ZIP to the output folder
           mkdir -p /build/output
-          cp out/target/product/generic/*.img /build/output/ 2>/dev/null || true
+          cp out/target/product/generic/full_arm-ota-*.zip /build/output/rom.zip 2>/dev/null || true
           EOF
 
           chmod +x build_script.sh
-          
-          # Run container as root
           docker run --privileged -u root -v $(pwd):/build -w /build kylemanna/aosp /bin/bash ./build_script.sh
 
-      - name: Upload
+      - name: Upload Flashable ROM
         uses: actions/upload-artifact@v4
         with:
-          name: JellyBean-Images
-          path: output/*.img
+          name: JellyBean-Flashable-ZIP
+          path: output/rom.zip
