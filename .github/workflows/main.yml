@@ -14,7 +14,7 @@ jobs:
         uses: easimon/maximize-build-space@master
         with:
           root-reserve-mb: 2048
-          swap-size-mb: 10240 # Increased swap for the linker
+          swap-size-mb: 10240
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
@@ -24,18 +24,24 @@ jobs:
 
       - name: Run Build in AOSP Container
         run: |
-          # Use a shell script to make sure commands run in order
+          # Create the script file
           cat <<EOF > build_script.sh
           set -e
+          
+          # Use the home directory to avoid "Permission Denied"
+          cd ~
+          
           git config --global user.email "builder@example.com"
           git config --global user.name "Builder"
           git config --global color.ui false
 
           mkdir -p jb_source && cd jb_source
           
-          # Download fresh repo tool inside the container
-          curl https://storage.googleapis.com/git-repo-downloads/repo > /usr/local/bin/repo
-          chmod a+x /usr/local/bin/repo
+          # Install repo tool in a local bin folder
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          export PATH=~/bin:\$PATH
 
           # Initialize
           repo init -u https://android.googlesource.com/platform/manifest -b android-4.2.2_r1 --depth=1
@@ -43,22 +49,26 @@ jobs:
           # Fix the dead git links
           sed -i 's/git:\/\//https:\/\//g' .repo/manifests/default.xml
           
-          # Sync (Depth 1 saves massive disk space)
+          # Sync
           repo sync -c -j4 --no-tags --no-clone-bundle
           
           # Build
           source build/envsetup.sh
           lunch full_arm-eng
           make -j$(nproc)
+          
+          # Copy output back to the github workspace so we can upload it
+          mkdir -p /build/output
+          cp out/target/product/generic/*.img /build/output/ 2>/dev/null || true
           EOF
 
           chmod +x build_script.sh
           
-          # Run the script inside the container
-          docker run --privileged -v $(pwd):/build -w /build kylemanna/aosp /bin/bash ./build_script.sh
+          # Run as root inside the container to ensure no permission issues with /build
+          docker run --privileged -u root -v $(pwd):/build -w /build kylemanna/aosp /bin/bash ./build_script.sh
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: JellyBean-System-Img
-          path: jb_source/out/target/product/*/system.img
+          name: JellyBean-Images
+          path: output/*.img
