@@ -14,7 +14,7 @@ jobs:
         uses: easimon/maximize-build-space@master
         with:
           root-reserve-mb: 2048
-          swap-size-mb: 5120
+          swap-size-mb: 10240 # Increased swap for the linker
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
@@ -24,30 +24,41 @@ jobs:
 
       - name: Run Build in AOSP Container
         run: |
-          # We run the commands inside a container that ALREADY works
-          docker run --privileged -v $(pwd):/build kylemanna/aosp /bin/bash -c "
-            git config --global user.email 'you@example.com'
-            git config --global user.name 'Your Name'
-            
-            mkdir -p jb_source && cd jb_source
-            
-            # Initialize
-            repo init -u https://android.googlesource.com/platform/manifest -b android-4.2.2_r1
-            
-            # Fix the dead git links
-            sed -i 's/git:\/\//https:\/\//g' .repo/manifests/default.xml
-            
-            # Sync
-            repo sync -c -j4 --no-tags --no-clone-bundle
-            
-            # Build
-            source build/envsetup.sh
-            lunch full_arm-eng
-            make -j$(nproc)
-          "
+          # Use a shell script to make sure commands run in order
+          cat <<EOF > build_script.sh
+          set -e
+          git config --global user.email "builder@example.com"
+          git config --global user.name "Builder"
+          git config --global color.ui false
+
+          mkdir -p jb_source && cd jb_source
+          
+          # Download fresh repo tool inside the container
+          curl https://storage.googleapis.com/git-repo-downloads/repo > /usr/local/bin/repo
+          chmod a+x /usr/local/bin/repo
+
+          # Initialize
+          repo init -u https://android.googlesource.com/platform/manifest -b android-4.2.2_r1 --depth=1
+          
+          # Fix the dead git links
+          sed -i 's/git:\/\//https:\/\//g' .repo/manifests/default.xml
+          
+          # Sync (Depth 1 saves massive disk space)
+          repo sync -c -j4 --no-tags --no-clone-bundle
+          
+          # Build
+          source build/envsetup.sh
+          lunch full_arm-eng
+          make -j$(nproc)
+          EOF
+
+          chmod +x build_script.sh
+          
+          # Run the script inside the container
+          docker run --privileged -v $(pwd):/build -w /build kylemanna/aosp /bin/bash ./build_script.sh
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: JB-ROM
+          name: JellyBean-System-Img
           path: jb_source/out/target/product/*/system.img
