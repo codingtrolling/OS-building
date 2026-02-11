@@ -1,75 +1,58 @@
-name: Build Jelly Bean ROM
+name: Build Jelly Bean ROM (Docker Method)
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [ main ]
 
 jobs:
   build:
-    # Using latest to avoid the queue loop often found on older images
     runs-on: ubuntu-latest
-    
+    # We use a Docker container to provide the legacy environment
+    container:
+      image: ubuntu:14.04
+
     steps:
+      - name: Install Git and Essentials
+        run: |
+          # 14.04 repos are moved to old-releases.ubuntu.com
+          sed -i 's/archive.ubuntu.com/old-releases.ubuntu.com/g' /etc/apt/sources.list
+          sed -i 's/security.ubuntu.com/old-releases.ubuntu.com/g' /etc/apt/sources.list
+          apt-get update
+          apt-get install -y git-core gnupg flex bison gperf build-essential \
+          zip curl zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 \
+          lib32ncurses5-dev x11proto-core-dev libx11-dev lib32z-dev ccache \
+          libgl1-mesa-dev libxml2-utils xsltproc unzip python openjdk-7-jdk
+
       - name: Checkout Code
         uses: actions/checkout@v4
-
-      - name: Maximize Disk Space
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: 2048
-          swap-size-mb: 5120
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-
-      - name: Install Build Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bc build-essential zip curl libncurses5-dev \
-          libsdl1.2-dev squashfs-tools schedtool libxml2-utils xsltproc \
-          g++-multilib lib32z1-dev lib32ncurses5-dev gcc-multilib \
-          python2 python-is-python2 liblz4-tool genisoimage git
 
       - name: Install Repo Tool
         run: |
           mkdir -p ~/bin
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
-          sudo ln -sf ~/bin/repo /usr/bin/repo
+          ln -sf ~/bin/repo /usr/bin/repo
 
-      - name: Initialize and Sync
+      - name: Sync Source
         run: |
-          git config --global user.email "build@example.com"
-          git config --global user.name "Builder"
-          mkdir jb-source && cd jb-source
-          
-          # Initialize Jelly Bean
+          git config --global user.email "you@example.com"
+          git config --global user.name "Your Name"
+          mkdir android && cd android
           repo init -u https://android.googlesource.com/platform/manifest -b android-4.2.2_r1
-          
-          # FIX: Replace dead git:// protocol with https:// in the manifest
+          # Convert git to https for the old manifest
           sed -i 's/git:\/\//https:\/\//g' .repo/manifests/default.xml
-          
-          # Sync with retries to prevent timing out
-          repo sync -c -j$(nproc) --force-sync --no-clone-bundle --no-tags
+          repo sync -c -j4
 
       - name: Build ROM
         run: |
-          cd jb-source
-          # Set Python 2 as default for the build script
-          export PYTHON=$(which python2)
-          
+          cd android
           source build/envsetup.sh
-          
-          # 'full_arm-eng' is the generic emulator build
-          # Change this to your device (e.g., mako, maguro) if you have the trees
           lunch full_arm-eng
-          
           make -j$(nproc)
 
-      - name: Upload Build Artifacts
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: JellyBean-Output
-          path: jb-source/out/target/product/*/system.img
+          name: JB-ROM
+          path: android/out/target/product/*/system.img
